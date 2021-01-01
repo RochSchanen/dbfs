@@ -5,6 +5,8 @@
 
 from sys import exit
 
+import numpy as np
+
 # 20201221 add virtual storage class
 
 __DEBUG__ = True
@@ -12,138 +14,151 @@ __DEBUG__ = True
 
 class virtualstorage():
 
-	wordSize 		= None 		# word size: depends on the data bus size ?
-	blockSize 		= None		# block size: in units of wordsize
-	blockStart      = None      # minimum block address value (depends on the header size ?)
-	blockStop       = None      # maximum block address value (determines the device size)
-	header 			= None      # record of the above values
+    fileHandle  = None
+    filePath    = None
+    wordSize    = None # word size in bits
+    blockSize   = None # block size in words
+    deviceSize  = None # device size in blocks
 
-	# additional parameters to use ? :
-	# writing period, reading period, security access, ...
+    # writing delay, reading delay, security, ...
  
-	blockAddress 	= None      # current block address: pointer to a block
-	blockData 		= None      # data stored at the current block address
+    def __init__(self):
+        if __DEBUG__: print('__init__')
+        return
 
-	# python implementation
+    def setWordSize(self, value):
+        if self.fileHandle:
+            print('setWordSize error')
+            print(' -> device locked')
+            exit()
+        if __DEBUG__: print(f'setWordSize {value}')
+        self.wordSize = value
+        return
 
-	fileHandle 		= None
-	filePath        = None
+    def getWordSize(self):
+        return self.wordSize
 
+    def setBlockSize(self, value):
+        if self.fileHandle:
+            print('setBlockSize error:')
+            print(' -> device locked')
+            exit()
+        if __DEBUG__: print(f'setBlockSize {value}')
+        self.blockSize = value
+        return
 
-	def __init__(self):
-		if __DEBUG__: print('__init__')
-		return
+    def getBlockSize(self):
+        return self.block
 
-	def setWordSize(self, value):
-		if self.fileHandle:
-			print('setWordSize error')
-			print(' -> device locked')
-			exit()
-		if __DEBUG__: print(f'setWordSize {value}')
-		self.wordSize = value
-		return
+    def setDeviceSize(self, value):
+        if self.fileHandle:
+            print('setDeviceSize error:')
+            print(' -> device locked')
+            exit()
+        if __DEBUG__: print(f'setDeviceSize {value}')
+        self.deviceSize = value
+        return      
 
-	def setBlockSize(self, value):
-		if self.fileHandle:
-			print('setBlockSize error:')
-			print(' -> device locked')
-			exit()
-		if __DEBUG__: print(f'setBlockSize {value}')
-		self.blockSize = value
-		return
+    def getDeviceSize(self):
+        return self.deviceSize
 
-	def setBlocksNumber(self, value):
-		if self.fileHandle:
-			print('setBlocksNumber error:')
-			print(' -> device locked')
-			exit()
-		if __DEBUG__: print(f'setBlocksNumber {value}')
-		self.blockStop = value-1
-		return		
+    def setFilePath(self, value):
+        if self.fileHandle:
+            print('setFilePath error:')
+            print(' -> device locked')
+            exit()
+        if __DEBUG__: print(f'setFilePath {value}')
+        self.filePath = value
+        return
 
-	def setFilePath(self, value):
-		if self.fileHandle:
-			print('setFilePath error:')
-			print(' -> device locked')
-			exit()
-		if __DEBUG__: print(f'setFilePath {value}')
-		self.filePath = value
-		return
+    def getFilePath(self):
+        return self.filePath
 
-	def createDevice(self):
-		# check definitions
-		error = False
-		if not self.filePath:
-			if not error: print('createDevice error')
-			print(' -> filePath undefined')
-			error = True
-		if not self.wordSize:
-			if not error: print('createDevice error')
-			print(' -> wordSize undefined')
-			error = True
-		if not self.blockSize:
-			if not error: print('createDevice error')
-			print(' -> blockSize undefined')
-			error = True
-		if not self.blockStop:
-			if not error: print('createDevice error')
-			print(' -> blocksNumber undefined')
-			error = True
-		
-		# encode wordSize 		
-		ws, l = self.wordSize, 1
-		while ws > 1:
-			l  +=  1
-			ws >>= 1
-		
-		print(ws, l)
+    def createDevice(self):
+        if self.fileHandle:
+            print('createDevice error:')
+            print(' -> device already opened')
+            print(' -> no operation')
+            return
+        # reset error flag
+        error = False
+        # check file path
+        messg = 'createDevice() error'
+        if not self.filePath:
+            if not error: print(messg)
+            print(' -> filePath undefined')
+            error = True
+        # check word size
+        if not self.wordSize:
+            if not error: print(messg)
+            print(' -> wordSize undefined')
+            error = True
+        # check block size
+        if not self.blockSize:
+            if not error: print(messg)
+            print(' -> blockSize undefined')
+            error = True
+        # check device size
+        if not self.deviceSize:
+            if not error: print(messg)
+            print(' -> deviceSize undefined')
+            error = True
+        # exit on error        
+        if error: exit()
+        # compute file size in bits
+        bitFileSize  = self.wordSize * self.blockSize * self.deviceSize
+        # compute file size in bytes
+        byteFileSize = bitFileSize >> 3
+        # ceil completion
+        if bitFileSize & 7: byteFileSize += 1  
+        # create binary file to hold the data
+        self.fileHandle = open(self.filePath, "wb")
+        # set the file size
+        self.fileHandle.seek(byteFileSize - 1)
+        self.fileHandle.write(b"\x00")
+        #done
+        return
 
-		if error: exit()
+    def closeDevice(self):
+        # flush data
+        # ...        
+        # close
+        self.fileHandle.close()
+        # unlock handle
+        self.fileHandle = None
+        # done
+        return
 
-		# # compute file size in bytes
-		# fileSize = self.wordSize * self.blockSize * (self.blockStop + 1)
-		# # create binary file to hold the data
-		# f = open(self.filePath, "wb")
-		# # fix the file size
-		# f.seek(fileSize - 1)
-		# f.write(b"\x00")
+    # blockAddress    = None      # current block address: pointer to a block
+    # blockData       = None      # cache data stored at the current block address
 
-		return
+    # def setAddress(self, a):
+    #     # check boundaries
+    #     if a > self.deviceSize:
+    #         print('setAddress error:')
+    #         print(' -> address exceeds device size')
+    #         print(' -> no operation')
+    #         return
+    #     # flush data
+    #     # ...        
+    #     # set address
+    #     self.blockAddress = a
 
-	def closeDevice(self):
-		# flush data		
-		# close
-		f.close()
-		return
+    #     #done
+    #     return        
 
 if __name__ == "__main__":
-	print("""
-	# file virtualstorage.py
-	# created 20201221
-	# author Roch Schanen
-	""")
+    print("""
+    # file virtualstorage.py
+    # created 20201221
+    # author Roch Schanen
+    """)
 
-	vs = virtualstorage()
+    vs = virtualstorage()
 
-	vs.setFilePath('./VS1MB') 	# define a 1MB storage as an example
-	vs.setWordSize(8)           # 8 bits data words
-	vs.setBlockSize(256)        # 256 words/bytes per blocks
-	vs.setBlocksNumber(4096)    # 4096 blocks in device
-
-	vs.createDevice()           # create the new storage
-	vs.setWordSize(7)           # 8 bits data words
-	vs.createDevice()           # create the new storage
-	vs.setWordSize(6)           # 8 bits data words
-	vs.createDevice()           # create the new storage
-	vs.setWordSize(5)           # 8 bits data words
-	vs.createDevice()           # create the new storage
-	vs.setWordSize(4)           # 8 bits data words
-	vs.createDevice()           # create the new storage
-	vs.setWordSize(3)           # 8 bits data words
-	vs.createDevice()           # create the new storage
-	vs.setWordSize(2)           # 8 bits data words
-	vs.createDevice()           # create the new storage
-	vs.setWordSize(1)           # 8 bits data words
-	vs.createDevice()           # create the new storage
-
-
+    vs.setFilePath('./VS1MB')   # define a 1MB storage as an example
+    vs.setWordSize(8)           # 8 bits
+    vs.setBlockSize(256)        # 256 words
+    vs.setDeviceSize(4096)      # 4096 blocks
+    vs.createDevice()           # create the new storage
+    vs.closeDevice()            # close storage
