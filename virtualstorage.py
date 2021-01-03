@@ -7,13 +7,17 @@ from sys import exit
 
 import numpy as np
 
+toByteString = int.to_bytes
+frByteString = int.from_bytes 
+
 # 20201221 add virtual storage class
 # 20210101 create storage file
+# 20210103 add openDevice, change class to virtuaLBlockDevice()
 
 __DEBUG__ = True
 # __DEBUG__ = False
 
-class virtualstorage():
+class virtuaLBlockDevice():
 
     fileHandle  = None
     filePath    = None
@@ -29,9 +33,10 @@ class virtualstorage():
 
     def setWordSize(self, value):
         if self.fileHandle:
-            print('setWordSize error')
+            print('setWordSize warning')
             print(' -> device locked')
-            exit()
+            print(' -> no operation')
+            return
         if __DEBUG__: print(f'setWordSize {value}')
         self.wordSize = value
         return
@@ -41,9 +46,10 @@ class virtualstorage():
 
     def setBlockSize(self, value):
         if self.fileHandle:
-            print('setBlockSize error:')
+            print('setBlockSize warning:')
             print(' -> device locked')
-            exit()
+            print(' -> no operation')
+            return
         if __DEBUG__: print(f'setBlockSize {value}')
         self.blockSize = value
         return
@@ -53,21 +59,23 @@ class virtualstorage():
 
     def setDeviceSize(self, value):
         if self.fileHandle:
-            print('setDeviceSize error:')
+            print('setDeviceSize warning:')
             print(' -> device locked')
-            exit()
+            print(' -> no operation')
+            return
         if __DEBUG__: print(f'setDeviceSize {value}')
         self.deviceSize = value
-        return      
+        return
 
     def getDeviceSize(self):
         return self.deviceSize
 
     def setFilePath(self, value):
         if self.fileHandle:
-            print('setFilePath error:')
+            print('setFilePath warning:')
             print(' -> device locked')
-            exit()
+            print(' -> no operation')
+            return
         if __DEBUG__: print(f'setFilePath {value}')
         self.filePath = value
         return
@@ -75,7 +83,44 @@ class virtualstorage():
     def getFilePath(self):
         return self.filePath
 
-    def createDevice(self):
+    def writeHeader(self):
+        if self.fileHandle is None:
+            print('writeHeader error:')
+            print(' -> no device')
+            print(' -> exit')
+            exit()
+        # make buffer
+        h = toByteString(self.wordSize, 4, 'little')
+        h += toByteString(self.blockSize, 4, 'little')
+        h += toByteString(self.deviceSize, 4, 'little')
+        # write buffer
+        self.fileHandle.write(h)
+        # preserve
+        self.header = h
+        # done        
+        return
+
+    def readHeader(self):
+        if self.fileHandle is None:
+            print('readHeader error:')
+            print(' -> no device')
+            print(' -> exit')
+            exit()
+        # load buffer
+        h = self.fileHandle.read(3*4)
+        # extract parameters
+        self.wordSize = frByteString(h[0:4], 'little')
+        self.blockSize = frByteString(h[4:8], 'little')
+        self.deviceSize = frByteString(h[8:12], 'little')
+        # preserve
+        self.header = h
+        # done        
+        return
+
+    def createDevice(self, filePath = None):
+        # option overload setup
+        if filePath: self.filePath = filePath
+        # check status
         if self.fileHandle:
             print('createDevice error:')
             print(' -> device already opened')
@@ -106,23 +151,23 @@ class virtualstorage():
             error = True
         # exit on error        
         if error: exit()
-        # make header
-        self.header  = self.wordSize.to_bytes(4, 'little')
-        self.header += self.blockSize.to_bytes(4, 'little')
-        self.header += self.deviceSize.to_bytes(4, 'little')
-        # compute file size in bits
-        bitFileSize  = self.wordSize * self.blockSize * self.deviceSize + 3*4*8
-        # compute file size in bytes
-        byteFileSize = bitFileSize >> 3
-        # 8bits alignment
-        if bitFileSize & 7: byteFileSize += 1  
+        # get parameters values
+        ws, bs, ds = self.wordSize, self.blockSize, self.deviceSize
         # create binary file to hold the data
         self.fileHandle = open(self.filePath, "wb+")
-        # write header
-        self.fileHandle.write(self.header)
+        # make header
+        self.writeHeader()
+        # get header size in bits
+        hs = len(self.header) << 3
+        # compute file size in bits        
+        bitFileSize  = ws*bs*ds + hs
+        # compute file size in bytes
+        byteFileSize = bitFileSize >> 3
+        # fix 8 bits trucation
+        if bitFileSize & 7: byteFileSize += 1  
         # point to the end-of-file
         self.fileHandle.seek(byteFileSize - 1)
-        # write an arbitrary byte to fix the file size
+        # write an arbitrary byte to set the file size
         self.fileHandle.write(b"\x00")
         #done
         return
@@ -134,12 +179,27 @@ class virtualstorage():
             print(' -> no operation')
             return
         # flush data
-        # ...        
+        self.flushCache()        
         # close
         self.fileHandle.close()
         # unlock handle
         self.fileHandle = None
         # done
+        return
+
+    def openDevice(self, filePath = None):
+        # option overload setup
+        if filePath: self.filePath = filePath
+        # check status
+        if self.fileHandle:
+            print('openDevice error:')
+            print(' -> device already opened')
+            print(' -> no operation')
+            return
+        # open binary file
+        self.fileHandle = open(self.filePath, "rb+")
+        # read header
+        self.readHeader()
         return
 
     blockAddress  = None  # current block address: pointer to a block
@@ -164,11 +224,13 @@ class virtualstorage():
             print(' -> no operation')
             return None
         # flush data
-        # ...
+        self.flushCache()
         # set address
         self.blockAddress = ba
+        # get fileheader size
+        hs = len(self.header)
         # set file pointer
-        self.fileHandle.seek(3*4 + ba*self.blockSize)
+        self.fileHandle.seek(hs+ba*self.blockSize)
         # read one block
         d = self.fileHandle.read(self.blockSize)
         # convert byte string into numpy array (mutable)
@@ -183,9 +245,9 @@ class virtualstorage():
             print(' -> no operation')
             return
         if self.blockData is None:
-            print('flushCache warning:')
-            print(' -> no cache to flush')
-            print(' -> no operation')
+            # print('flushCache warning:')
+            # print(' -> no cache to flush')
+            # print(' -> no operation')
             return
         # set file pointer
         self.fileHandle.seek(3*4 + self.blockAddress*self.blockSize)
@@ -203,20 +265,32 @@ if __name__ == "__main__":
     # author Roch Schanen
     """)
 
-    vs = virtualstorage()
+    # EXAMPLE:
 
-    vs.setFilePath('./VS1MB')   # define a 1MB storage as an example
-    vs.setWordSize(8)           # 8 bits
-    vs.setBlockSize(16)         # 256 words
-    vs.setDeviceSize(16)        # 4096 blocks
-    vs.createDevice()           # create the new storage
+    vs = virtuaLBlockDevice()
 
-    b1 = vs.getCache(0)
-    b1[0] = 16
+    # -----------------------
+
+    vs.setWordSize(8)
+    vs.setBlockSize(8)
+    vs.setDeviceSize(8)
+    vs.createDevice('./VS1MB')
+
+    # ---
+    c = vs.getCache(0)
+    c[0] = 1
     vs.flushCache()
+    # ---
 
-    b1 = vs.getCache(15)
-    b1[0:16] = [255]*16
-    vs.flushCache()
+    vs.closeDevice()
 
-    vs.closeDevice()            # close storage
+    # -----------------------
+
+    vs.openDevice('./VS1MB')
+
+    # ---
+    vs.getCache(1)[0] = 2
+    vs.getCache(2)[0] = 3
+    # ---
+
+    vs.closeDevice()
